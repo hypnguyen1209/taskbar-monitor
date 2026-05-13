@@ -42,10 +42,7 @@ namespace TaskbarMonitor.Counters
                 InfoSummary.CurrentValue = currentValue;
                 InfoSummary.History.Add(currentValue);
                 if (InfoSummary.History.Count > Options.HistorySize) InfoSummary.History.RemoveAt(0);
-                if(InfoSummary.CurrentValue <= InfoSummary.MaximumValue)
-                    InfoSummary.CurrentStringValue = InfoSummary.CurrentValue.ToString("0") + "%";
-                else
-                    InfoSummary.CurrentStringValue = InfoSummary.MaximumValue.ToString("0") + "% +" + (InfoSummary.MaximumValue - InfoSummary.CurrentValue).ToString("0");
+                InfoSummary.CurrentStringValue = Math.Min(InfoSummary.MaximumValue, Math.Max(0, InfoSummary.CurrentValue)).ToString("0") + "%";
 
                 var cores = reader.Values.Where(x => x.Key.StartsWith(@"\Processor Information(*)\% Processor Utility:") && Regex.IsMatch(x.Key, @"\d+,\d+$")).ToList();
 

@@ -7,7 +7,7 @@ namespace TaskbarMonitor
 {
     [ComVisible(true)]
     [Guid("13790826-15fa-46d0-9814-c2a5c6c11f32")]
-    [CSDeskBand.CSDeskBandRegistration(Name = "taskbar-monitor", ShowDeskBand = true)]
+    [CSDeskBand.CSDeskBandRegistration(Name = "taskbar-monitor", ShowDeskBand = false)]
     public class Deskband : CSDeskBand.CSDeskBandWin
     {
         private static Control _control;
@@ -31,7 +31,9 @@ namespace TaskbarMonitor
                 TaskbarInfo.TaskbarOrientationChanged += TaskbarInfo_TaskbarOrientationChanged;
                 Monitor monitor = Monitor.GetInstance(opt);
                 var ctl = new SystemWatcherControl(monitor, false, this);
-                Options.MinHorizontalSize = new Size((ctl.Options.HistorySize + 10) * ctl.CountersCount, CSDeskBand.CSDeskBandOptions.TaskbarHorizontalHeightSmall);
+                Options.MinHorizontalSize = ctl.Size.Width > 0
+                    ? new Size(ctl.Size.Width, Math.Max(ctl.Size.Height, CSDeskBand.CSDeskBandOptions.TaskbarHorizontalHeightSmall))
+                    : new Size((ctl.Options.HistorySize + 10) * ctl.CountersCount, CSDeskBand.CSDeskBandOptions.TaskbarHorizontalHeightSmall);
                 
                 ctl.OnChangeSize += Ctl_OnChangeSize;
                 //Options.HeightCanChange = false;                
@@ -65,7 +67,7 @@ namespace TaskbarMonitor
 
         private void Ctl_OnChangeSize(Size size)
         {                        
-            Options.MinHorizontalSize = new Size(size.Width, CSDeskBand.CSDeskBandOptions.TaskbarHorizontalHeightSmall);            
+            Options.MinHorizontalSize = new Size(size.Width, Math.Max(size.Height, CSDeskBand.CSDeskBandOptions.TaskbarHorizontalHeightSmall));            
             // Options.MaxHorizontalHeight = size.Height;
         }
 

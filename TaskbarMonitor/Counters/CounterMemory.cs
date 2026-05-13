@@ -74,7 +74,11 @@ namespace TaskbarMonitor.Counters
                 InfoSummary.History.Add(currentValue);
                 if (InfoSummary.History.Count > Options.HistorySize) InfoSummary.History.RemoveAt(0);
 
-                InfoSummary.CurrentStringValue = (InfoSummary.CurrentValue / 1024).ToString("0.0") + "GB";
+                float currentPercent = InfoSummary.MaximumValue > 0
+                    ? (InfoSummary.CurrentValue / InfoSummary.MaximumValue) * 100f
+                    : 0f;
+                currentPercent = Math.Min(100f, Math.Max(0f, currentPercent));
+                InfoSummary.CurrentStringValue = currentPercent.ToString("0") + "%";
 
                 {
                     var info = Infos.Where(x => x.Name == "U").Single();
@@ -82,7 +86,7 @@ namespace TaskbarMonitor.Counters
                     info.History.Add(currentValue);
                     if (info.History.Count > Options.HistorySize) info.History.RemoveAt(0);
 
-                    info.CurrentStringValue = (info.CurrentValue / 1024).ToString("0.0") + "GB";
+                    info.CurrentStringValue = InfoSummary.CurrentStringValue;
                 }
 
             }

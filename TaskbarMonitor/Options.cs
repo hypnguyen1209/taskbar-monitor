@@ -16,12 +16,13 @@ namespace TaskbarMonitor
             LIGHT,
             CUSTOM            
         }
-        public static readonly int LATESTOPTIONSVERSION = 5;
+        public static readonly int LATESTOPTIONSVERSION = 6;
         public int OptionsVersion = LATESTOPTIONSVERSION;
         public Dictionary<string, CounterOptions> CounterOptions { get; set; }
         public int HistorySize { get; set; } = 50;
         public int PollTime { get; set; } = 3;
         public ThemeList ThemeType { get; set; } = ThemeList.AUTOMATIC;
+        public bool EnableClaudeUsage { get; set; } = true;
 
         public bool EnableOnAllMonitors { get; set; } = true;
         public Dictionary<string, MonitorOptions> MonitorOptions { get; set; } = new Dictionary<string, MonitorOptions>();
@@ -31,6 +32,7 @@ namespace TaskbarMonitor
             opt.HistorySize = this.HistorySize;
             opt.PollTime = this.PollTime;
             opt.ThemeType = this.ThemeType;
+            opt.EnableClaudeUsage = this.EnableClaudeUsage;
             if(opt.CounterOptions == null)
                 opt.CounterOptions = new Dictionary<string, CounterOptions>();
             
@@ -51,6 +53,14 @@ namespace TaskbarMonitor
                 opt.CounterOptions[item.Key].SeparateScales = item.Value.SeparateScales;
                 opt.CounterOptions[item.Key].GraphType = item.Value.GraphType;
                 opt.CounterOptions[item.Key].Order = item.Value.Order;
+            }
+            for (int i = 0; i < opt.CounterOptions.Count; i++)
+            {
+                if (!this.CounterOptions.ContainsKey(opt.CounterOptions.Keys.ToList()[i]))
+                {
+                    opt.CounterOptions.Remove(opt.CounterOptions.Keys.ToList()[i]);
+                    i--;
+                }
             }
 
             opt.EnableOnAllMonitors = this.EnableOnAllMonitors;
@@ -190,6 +200,7 @@ namespace TaskbarMonitor
                         item.Value.ShowCurrentValue = TaskbarMonitor.CounterOptions.DisplayType.SHOW;
                 }
             }*/
+            opt.ApplyCpuMemOnlyLayout();
             return opt;
         }
         public static Options ReadFromDisk()
@@ -201,7 +212,19 @@ namespace TaskbarMonitor
             if (System.IO.File.Exists(origin))
             {
                 opt = JsonConvert.DeserializeObject<Options>(System.IO.File.ReadAllText(origin));
-                
+                bool changed = false;
+                if (opt.OptionsVersion < 6)
+                {
+                    opt.EnableClaudeUsage = true;
+                    opt.OptionsVersion = LATESTOPTIONSVERSION;
+                    changed = true;
+                }
+
+                if (opt.ApplyCpuMemOnlyLayout())
+                    changed = true;
+
+                if (changed)
+                    opt.SaveToDisk();
             }
             else
             {
@@ -212,7 +235,7 @@ namespace TaskbarMonitor
         }
         public bool Upgrade(GraphTheme graphTheme)
         {
-            if (_Upgrade(graphTheme)) // do a inplace upgrade
+            if (_Upgrade(graphTheme) || ApplyCpuMemOnlyLayout()) // do a inplace upgrade
             {
                 return SaveToDisk();
             }
@@ -296,10 +319,59 @@ namespace TaskbarMonitor
                     if (item.Key.StartsWith("GPU") && item.Value.GraphType != Counters.ICounter.CounterType.SINGLE)
                         item.Value.GraphType = Counters.ICounter.CounterType.SINGLE;
                 }
-                
+
+                this.EnableClaudeUsage = true;
+                ret = true;
             }
             this.OptionsVersion = LATESTOPTIONSVERSION;              
             return ret;
+        }
+
+        private bool ApplyCpuMemOnlyLayout()
+        {
+            bool changed = false;
+            string[] visibleCounters = { "CPU", "MEM" };
+
+            for (int i = 0; i < this.CounterOptions.Count; i++)
+            {
+                string key = this.CounterOptions.Keys.ToList()[i];
+                if (!visibleCounters.Contains(key))
+                {
+                    this.CounterOptions.Remove(key);
+                    changed = true;
+                    i--;
+                }
+            }
+
+            if (this.CounterOptions.ContainsKey("CPU"))
+            {
+                changed |= ConfigureCounter(this.CounterOptions["CPU"], 0);
+            }
+
+            if (this.CounterOptions.ContainsKey("MEM"))
+            {
+                changed |= ConfigureCounter(this.CounterOptions["MEM"], 1);
+            }
+
+            if (this.HistorySize < 70)
+            {
+                this.HistorySize = 70;
+                changed = true;
+            }
+
+            return changed;
+        }
+
+        private static bool ConfigureCounter(CounterOptions counter, int order)
+        {
+            bool changed = false;
+            if (counter.Order != order) { counter.Order = order; changed = true; }
+            if (counter.ShowTitle != TaskbarMonitor.CounterOptions.DisplayType.SHOW) { counter.ShowTitle = TaskbarMonitor.CounterOptions.DisplayType.SHOW; changed = true; }
+            if (counter.TitlePosition != TaskbarMonitor.CounterOptions.DisplayPosition.MIDDLE) { counter.TitlePosition = TaskbarMonitor.CounterOptions.DisplayPosition.MIDDLE; changed = true; }
+            if (counter.ShowCurrentValue != TaskbarMonitor.CounterOptions.DisplayType.SHOW) { counter.ShowCurrentValue = TaskbarMonitor.CounterOptions.DisplayType.SHOW; changed = true; }
+            if (!counter.CurrentValueAsSummary) { counter.CurrentValueAsSummary = true; changed = true; }
+            if (counter.SummaryPosition != TaskbarMonitor.CounterOptions.DisplayPosition.MIDDLE) { counter.SummaryPosition = TaskbarMonitor.CounterOptions.DisplayPosition.MIDDLE; changed = true; }
+            return changed;
         }
     }
 

@@ -19,6 +19,7 @@ namespace TaskbarMonitor
         private Version Version;
 
         private CounterOptions ActiveCounter = null;
+        private const string ClaudeUsageSettingsName = "Claude Usage";
         private bool initializing = true;
         Dictionary<string, IList<TaskbarMonitor.Counters.ICounter.CounterType>> AvailableGraphTypes;
 
@@ -58,30 +59,6 @@ namespace TaskbarMonitor
                     TaskbarMonitor.Counters.ICounter.CounterType.SINGLE
                 }
                 },
-                {"DISK",  new List<TaskbarMonitor.Counters.ICounter.CounterType>
-                {
-                    TaskbarMonitor.Counters.ICounter.CounterType.SINGLE,
-                    TaskbarMonitor.Counters.ICounter.CounterType.STACKED,
-                    TaskbarMonitor.Counters.ICounter.CounterType.MIRRORED
-                }
-                },
-                {"NET",  new List<TaskbarMonitor.Counters.ICounter.CounterType>
-                {
-                    TaskbarMonitor.Counters.ICounter.CounterType.SINGLE,
-                    TaskbarMonitor.Counters.ICounter.CounterType.STACKED,
-                    TaskbarMonitor.Counters.ICounter.CounterType.MIRRORED
-                }
-                },
-                {"GPU 3D",  new List<TaskbarMonitor.Counters.ICounter.CounterType>
-                {
-                    TaskbarMonitor.Counters.ICounter.CounterType.SINGLE
-                }
-                },
-                {"GPU MEM",  new List<TaskbarMonitor.Counters.ICounter.CounterType>
-                {
-                    TaskbarMonitor.Counters.ICounter.CounterType.SINGLE
-                }
-                }
             };
                 InitializeComponent();
                 /*
@@ -113,7 +90,7 @@ namespace TaskbarMonitor
             this.editHistorySize.Value = this.Options.HistorySize;
             this.editPollTime.Value = this.Options.PollTime;
             this.listThemeType.Text = this.Options.ThemeType.ToString();
-            this.listCounters.DataSource = this.Options.CounterOptions.OrderBy(x => x.Value.Order).Select(x=> x.Key).ToList();
+            this.listCounters.DataSource = GetSettingsItems();
             var items = Enum.GetValues(typeof(CounterOptions.DisplayType)).OfType<CounterOptions.DisplayType>().ToList();
             if (BLL.WindowsInformation.IsWindows11())
             {
@@ -131,7 +108,8 @@ namespace TaskbarMonitor
 
             lblVersion.Text = "v" + Version.ToString(3);
 
-            ActiveCounter = this.Options.CounterOptions.First().Value;
+            listCounters.SelectedItem = ClaudeUsageSettingsName;
+            ActiveCounter = null;
             UpdateForm();
             UpdateReplicateSettingsMenu();
             UpdateThemeOptions();
@@ -151,6 +129,10 @@ namespace TaskbarMonitor
             btnColor2.BackColor = this.Theme.StackedColors[1];
 
             chkEnableAllTaskbars.Checked = this.Options.EnableOnAllMonitors;
+            buttonUp.Visible = false;
+            buttonDown.Visible = false;
+            buttonReplicateSettings.Visible = false;
+            btnMenuCounters.Text = "USAGE";
             UpdateMonitorForm();
 
             UpdatePreview();
@@ -210,7 +192,7 @@ namespace TaskbarMonitor
         private void ListCounters_SelectedIndexChanged(object sender, EventArgs e)
         {
             if (initializing || String.IsNullOrEmpty(listCounters.Text)) return;
-            ActiveCounter = Options.CounterOptions[listCounters.Text];
+            ActiveCounter = IsClaudeUsageSelected() ? null : Options.CounterOptions[listCounters.Text];
             UpdateReplicateSettingsMenu();
             UpdateForm();
             UpdatePreview();
@@ -272,9 +254,9 @@ namespace TaskbarMonitor
         private void UpdateReplicateSettingsMenu()
         {
             contextMenuStripReplicateSettings.Items.Clear();
-            contextMenuStripReplicateSettings.Items.Add(new ToolStripMenuItem("All other graphs", null, contextMenuStripReplicateSettings_OnClick));
-            contextMenuStripReplicateSettings.Items.Add(new ToolStripSeparator());
-            foreach (var item in Options.CounterOptions.Keys.AsEnumerable().ToList())
+            if (IsClaudeUsageSelected()) return;
+
+            foreach (var item in GetVisibleCounterNames())
             {
                 if (item != listCounters.Text)
                 {
@@ -286,20 +268,8 @@ namespace TaskbarMonitor
         {
             var menu = sender as ToolStripMenuItem;
             List<string> destiny = new List<string>();
-            if(menu.Text == "All other graphs")
-            {
-                foreach (var item in Options.CounterOptions.Keys.AsEnumerable().ToList())
-                {
-                    if (item != listCounters.Text)
-                    {
-                        destiny.Add(item);
-                    }
-                }
-            }
-            else
-            {
-                destiny.Add(menu.Text);
-            }
+            if (ActiveCounter == null) return;
+            destiny.Add(menu.Text);
 
             foreach (var item in destiny)
             {
@@ -317,6 +287,19 @@ namespace TaskbarMonitor
         private void UpdateForm()
         {
             initializing = true;
+            bool isClaudeUsage = IsClaudeUsageSelected();
+            SetCounterControlsVisible(!isClaudeUsage);
+            groupBox2.Text = isClaudeUsage ? "Claude usage" : "Main settings";
+
+            if (isClaudeUsage)
+            {
+                checkEnabled.Checked = Options.EnableClaudeUsage;
+                buttonUp.Enabled = false;
+                buttonDown.Enabled = false;
+                initializing = false;
+                return;
+            }
+
             this.listGraphType.DataSource = this.AvailableGraphTypes[listCounters.Text];
             initializing = false;
             this.listGraphType.Text = ActiveCounter.GraphType.ToString();
@@ -336,6 +319,40 @@ namespace TaskbarMonitor
             UpdateFormOrder();
              
             UpdateFormShow();
+        }
+
+        private bool IsClaudeUsageSelected()
+        {
+            return listCounters.Text == ClaudeUsageSettingsName;
+        }
+
+        private List<string> GetSettingsItems()
+        {
+            var items = new List<string> { ClaudeUsageSettingsName };
+            items.AddRange(GetVisibleCounterNames());
+            return items;
+        }
+
+        private List<string> GetVisibleCounterNames()
+        {
+            return Options.CounterOptions
+                .Where(x => x.Key == "CPU" || x.Key == "MEM")
+                .OrderBy(x => x.Value.Order)
+                .Select(x => x.Key)
+                .ToList();
+        }
+
+        private void SetCounterControlsVisible(bool visible)
+        {
+            groupBox3.Visible = visible;
+            groupBox4.Visible = visible;
+            listGraphType.Visible = false;
+            checkInvertOrder.Visible = false;
+            checkSeparateScales.Visible = false;
+            label6.Visible = false;
+            label21.Visible = false;
+            label31.Visible = false;
+            label32.Visible = false;
         }
 
         
@@ -635,7 +652,10 @@ namespace TaskbarMonitor
         private void checkEnabled_CheckedChanged(object sender, EventArgs e)
         {
             if (initializing) return;
-            ActiveCounter.Enabled = checkEnabled.Checked;
+            if (IsClaudeUsageSelected())
+                Options.EnableClaudeUsage = checkEnabled.Checked;
+            else
+                ActiveCounter.Enabled = checkEnabled.Checked;
             UpdatePreview();
         }
 

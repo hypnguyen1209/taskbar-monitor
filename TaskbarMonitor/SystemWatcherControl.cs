@@ -5,6 +5,7 @@ using System.Data;
 using System.Drawing;
 using System.Linq;
 using System.Threading;
+using System.Threading.Tasks;
 using System.Windows.Forms;
 
 // control architecture
@@ -29,6 +30,9 @@ namespace TaskbarMonitor
 
         private bool _previewMode = false;
         private ContextMenu _contextMenu = null;
+        private ClaudeUsageMonitor claudeUsageMonitor;
+        private System.Windows.Forms.Timer claudeUsageTimer;
+        private bool claudeUsageRefreshing;
 
         [Browsable(false)]
         [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
@@ -121,6 +125,7 @@ namespace TaskbarMonitor
         {
             if(Monitor != null)
                 Monitor.OnMonitorUpdated -= Monitor_OnMonitorUpdated;
+            StopClaudeUsagePolling();
             if(BLL.WindowsInformation.IsWindows11())
                 StopMousePolling();
         }
@@ -299,6 +304,8 @@ namespace TaskbarMonitor
             AdjustControlSize();
             if (BLL.WindowsInformation.IsWindows11())
                 StartMousePolling();
+            if (!PreviewMode)
+                StartClaudeUsagePolling();
             //BLL.Win32Api.SetWindowPos(this.Handle, new IntPtr(0), this.Left, this.Top, this.Width, this.Height, 0);
 
         }
@@ -319,14 +326,17 @@ namespace TaskbarMonitor
             if (minimumHeight < 20)
                 minimumHeight = 20;
 
-            if (taskbarWidth > 0 && taskbarHeight == 0)
-                VerticalTaskbarMode = true;
-            else if (taskbarWidth == 0 && taskbarHeight > 0)
-                VerticalTaskbarMode = false;
+            VerticalTaskbarMode = false;
 
             int counterSize = (Options.HistorySize + 10);
             int controlWidth = counterSize * CountersCount;
             int controlHeight = minimumHeight;
+
+            if (!VerticalTaskbarMode)
+            {
+                controlWidth = GetUsageLimitWidth() + GetUsageLimitGap() + 34 + counterSize + 60;
+                controlHeight = minimumHeight;
+            }
 
             if (VerticalTaskbarMode && taskbarWidth < controlWidth)
             {
@@ -358,6 +368,7 @@ namespace TaskbarMonitor
 
             int graphPosition = 0;
             int graphPositionY = 0;
+            int rowIndex = 0;
 
 
             System.Drawing.Graphics formGraphics = e.Graphics;// this.CreateGraphics();            
@@ -392,6 +403,14 @@ namespace TaskbarMonitor
                     base.OnPaint(e);
                     return;
                 }
+                if (!VerticalTaskbarMode)
+                {
+                    if (ShouldShowClaudeUsage())
+                    {
+                        int cpuBlockX = GetCpuBlockX();
+                        drawUsageLimitMockup(formGraphics, Math.Max(2, cpuBlockX - GetUsageLimitGap() - GetUsageLimitWidth()), maximumHeight);
+                    }
+                }
                 foreach (var pair in Options.CounterOptions.Where(x => x.Value.Enabled == true).OrderBy(x => x.Value.Order))
                 {
                     var name = pair.Key;
@@ -404,16 +423,30 @@ namespace TaskbarMonitor
                     //if (!opt.Enabled) continue;
                     var showCurrentValue = !opt.CurrentValueAsSummary &&
                         (opt.ShowCurrentValue == CounterOptions.DisplayType.SHOW || (opt.ShowCurrentValue == CounterOptions.DisplayType.HOVER && mouseOver));
+                    int currentGraphPosition = graphPosition;
+                    int currentGraphPositionY = graphPositionY;
+                    int currentMaximumHeight = maximumHeight;
+
+                    if (!VerticalTaskbarMode)
+                    {
+                        currentMaximumHeight = Math.Max(10, this.Height / Math.Max(1, CountersCount));
+                        currentGraphPosition = GetCpuBlockX() + 34;
+                        currentGraphPositionY = rowIndex * currentMaximumHeight;
+                    }
 
                     lock (ct.ThreadLock)
                     {
                         if (infos.Count == 0)
                             continue;
 
-                        if (ct.GetCounterType() == TaskbarMonitor.Counters.ICounter.CounterType.SINGLE)
+                        if (!VerticalTaskbarMode)
+                        {
+                            drawPercentBar(formGraphics, ct.GetLabel(), ct.InfoSummary, GetCpuBlockX(), currentGraphPositionY, currentMaximumHeight, defaultTheme);
+                        }
+                        else if (ct.GetCounterType() == TaskbarMonitor.Counters.ICounter.CounterType.SINGLE)
                         {
                             var info = infos[0];
-                            drawGraph(formGraphics, graphPosition, 0 + graphPositionY, maximumHeight, false, info, defaultTheme, opt);
+                            drawGraph(formGraphics, currentGraphPosition, currentGraphPositionY, currentMaximumHeight, false, info, defaultTheme, opt);
 
                         }
                         else if (ct.GetCounterType() == TaskbarMonitor.Counters.ICounter.CounterType.MIRRORED)
@@ -423,14 +456,14 @@ namespace TaskbarMonitor
                             for (int z = 0; z < infos.Count; z++)
                             {
                                 var info = opt.InvertOrder ? infos[infos.Count - 1 - z] : infos[z];
-                                drawGraph(formGraphics, graphPosition, z * (maximumHeight / 2) + graphPositionY, maximumHeight / 2, z == 1, info, defaultTheme, opt);
+                                drawGraph(formGraphics, currentGraphPosition, z * (currentMaximumHeight / 2) + currentGraphPositionY, currentMaximumHeight / 2, z == 1, info, defaultTheme, opt);
                             }
 
 
                         }
                         else if (ct.GetCounterType() == TaskbarMonitor.Counters.ICounter.CounterType.STACKED)
                         {
-                            drawStackedGraph(formGraphics, graphPosition, 0 + graphPositionY, maximumHeight, opt.InvertOrder, infos, defaultTheme, opt);
+                            drawStackedGraph(formGraphics, currentGraphPosition, currentGraphPositionY, currentMaximumHeight, opt.InvertOrder, infos, defaultTheme, opt);
 
 
                         }
@@ -439,9 +472,15 @@ namespace TaskbarMonitor
                     var sizeTitle = formGraphics.MeasureString(ct.GetLabel(), fontTitle);
                     Dictionary<CounterOptions.DisplayPosition, float> positions = new Dictionary<CounterOptions.DisplayPosition, float>();
 
-                    positions.Add(CounterOptions.DisplayPosition.MIDDLE, (maximumHeight / 2 - sizeTitle.Height / 2) + 1 + graphPositionY);
-                    positions.Add(CounterOptions.DisplayPosition.TOP, graphPositionY);
-                    positions.Add(CounterOptions.DisplayPosition.BOTTOM, (maximumHeight - sizeTitle.Height + 1) + graphPositionY);
+                    positions.Add(CounterOptions.DisplayPosition.MIDDLE, (currentMaximumHeight / 2 - sizeTitle.Height / 2) + 1 + currentGraphPositionY);
+                    positions.Add(CounterOptions.DisplayPosition.TOP, currentGraphPositionY);
+                    positions.Add(CounterOptions.DisplayPosition.BOTTOM, (currentMaximumHeight - sizeTitle.Height + 1) + currentGraphPositionY);
+
+                    if (!VerticalTaskbarMode)
+                    {
+                        rowIndex++;
+                        continue;
+                    }
 
                     CounterOptions.DisplayPosition? usedPosition = null;
                     if (opt.ShowTitle == CounterOptions.DisplayType.SHOW
@@ -562,6 +601,115 @@ namespace TaskbarMonitor
 
             AdjustControlSize();
             base.OnPaint(e);
+        }
+
+        private void drawPercentBar(System.Drawing.Graphics formGraphics, string label, TaskbarMonitor.Counters.CounterInfo info, int x, int y, int rowHeight, GraphTheme theme)
+        {
+            if (info == null || info.MaximumValue <= 0) return;
+
+            float ratio = info.CurrentValue / info.MaximumValue;
+            if (ratio < 0) ratio = 0;
+            if (ratio > 1) ratio = 1;
+
+            int labelWidth = 30;
+            int barX = x + labelWidth + 4;
+            int barWidth = Options.HistorySize;
+            int barHeight = Math.Max(4, rowHeight - 6);
+            int barY = y + Math.Max(0, (rowHeight - barHeight) / 2);
+            int fillWidth = Convert.ToInt32(Math.Round(barWidth * ratio));
+            string value = info.CurrentStringValue;
+
+            using (SolidBrush brushTitle = new SolidBrush(theme.TitleColor))
+            using (SolidBrush brushText = new SolidBrush(theme.TextColor))
+            using (SolidBrush brushBack = new SolidBrush(Color.FromArgb(55, theme.TextColor)))
+            using (SolidBrush brushFill = new SolidBrush(theme.BarColor))
+            using (Pen border = new Pen(Color.FromArgb(120, theme.TextColor)))
+            {
+                var labelSize = formGraphics.MeasureString(label, fontTitle);
+                var valueSize = formGraphics.MeasureString(value, fontCounter);
+                float labelY = y + (rowHeight / 2f - labelSize.Height / 2f);
+                float valueY = y + (rowHeight / 2f - valueSize.Height / 2f);
+
+                formGraphics.DrawString(label, fontTitle, brushTitle, new RectangleF(x + 2, labelY, labelWidth, rowHeight), new StringFormat());
+                formGraphics.FillRectangle(brushBack, new Rectangle(barX, barY, barWidth, barHeight));
+                if (fillWidth > 0)
+                    formGraphics.FillRectangle(brushFill, new Rectangle(barX, barY, fillWidth, barHeight));
+                formGraphics.DrawRectangle(border, new Rectangle(barX, barY, barWidth, barHeight));
+                formGraphics.DrawString(value, fontCounter, brushText, new RectangleF(barX + barWidth + 8, valueY, 52, rowHeight), new StringFormat());
+            }
+        }
+
+        private static int GetUsageLimitWidth()
+        {
+            return 205;
+        }
+
+        private static int GetUsageLimitGap()
+        {
+            return 8;
+        }
+
+        private int GetCpuBlockX()
+        {
+            int cpuBlockWidth = 34 + Options.HistorySize + 10 + 60;
+            return Math.Max(GetUsageLimitWidth() + GetUsageLimitGap(), this.Width - cpuBlockWidth);
+        }
+
+        private bool ShouldShowClaudeUsage()
+        {
+            return (Options?.EnableClaudeUsage).GetValueOrDefault(true)
+                && (claudeUsageMonitor?.Snapshot.Visible).GetValueOrDefault();
+        }
+
+        private void drawUsageLimitMockup(System.Drawing.Graphics formGraphics, int x, int totalHeight)
+        {
+            int rowHeight = Math.Max(10, totalHeight / 2);
+            ClaudeUsageSnapshot usage = claudeUsageMonitor?.Snapshot ?? new ClaudeUsageSnapshot();
+
+            drawUsageLimitRow(formGraphics, "CURRENT", usage.CurrentRatio, usage.CurrentTimeLeft, x, 0, rowHeight);
+            drawUsageLimitRow(formGraphics, "WEEKLY", usage.WeeklyRatio, usage.WeeklyTimeLeft, x, rowHeight, rowHeight);
+        }
+
+        private void drawUsageLimitRow(System.Drawing.Graphics formGraphics, string label, float ratio, string timeLeft, int x, int y, int rowHeight)
+        {
+            if (ratio < 0) ratio = 0;
+            if (ratio > 1) ratio = 1;
+
+            int labelWidth = 58;
+            int valueWidth = 82;
+            int barWidth = GetUsageLimitWidth() - labelWidth - valueWidth - 12;
+            int barHeight = Math.Max(4, rowHeight - 6);
+            int barX = x + labelWidth + 4;
+            int barY = y + Math.Max(0, (rowHeight - barHeight) / 2);
+            int fillWidth = Convert.ToInt32(Math.Round(barWidth * ratio));
+            string text = label + ":";
+            string percentText = (ratio * 100).ToString("0") + "%";
+            string timeText = " (" + timeLeft + ")";
+
+            using (SolidBrush brushTitle = new SolidBrush(defaultTheme.TitleColor))
+            using (SolidBrush brushText = new SolidBrush(defaultTheme.TextColor))
+            using (SolidBrush brushTime = new SolidBrush(defaultTheme.TitleColor))
+            using (SolidBrush brushBack = new SolidBrush(Color.FromArgb(45, defaultTheme.TextColor)))
+            using (SolidBrush brushFill = new SolidBrush(label == "CURRENT"
+                ? Color.FromArgb(0, 170, 255)
+                : defaultTheme.getNthColor(2, 1)))
+            using (Pen border = new Pen(Color.FromArgb(110, defaultTheme.TextColor)))
+            {
+                var textSize = formGraphics.MeasureString(text, fontTitle);
+                var percentSize = formGraphics.MeasureString(percentText, fontCounter);
+                var valueSize = formGraphics.MeasureString(percentText + timeText, fontCounter);
+                float textY = y + (rowHeight / 2f - textSize.Height / 2f);
+                float valueY = y + (rowHeight / 2f - valueSize.Height / 2f);
+                float valueX = barX + barWidth + 4;
+
+                formGraphics.DrawString(text, fontTitle, brushTitle, new RectangleF(x, textY, labelWidth, rowHeight), new StringFormat());
+                formGraphics.FillRectangle(brushBack, new Rectangle(barX, barY, barWidth, barHeight));
+                if (fillWidth > 0)
+                    formGraphics.FillRectangle(brushFill, new Rectangle(barX, barY, fillWidth, barHeight));
+                formGraphics.DrawRectangle(border, new Rectangle(barX, barY, barWidth, barHeight));
+                formGraphics.DrawString(percentText, fontCounter, brushText, new RectangleF(valueX, valueY, valueWidth, rowHeight), new StringFormat());
+                formGraphics.DrawString(timeText, fontCounter, brushTime, new RectangleF(valueX + percentSize.Width - 1, valueY, valueWidth, rowHeight), new StringFormat());
+            }
         }
          
         private void drawGraph(System.Drawing.Graphics formGraphics, int x, int y, int maxH, bool invertido, TaskbarMonitor.Counters.CounterInfo info, GraphTheme theme, CounterOptions opt)
@@ -685,12 +833,17 @@ namespace TaskbarMonitor
 
         private static int GetTaskbarWidth()
         {
-            return Screen.PrimaryScreen.Bounds.Width - Screen.PrimaryScreen.WorkingArea.Width;
+            return 0;
         }
 
         private static int GetTaskbarHeight()
         {
-            return Screen.PrimaryScreen.Bounds.Height - Screen.PrimaryScreen.WorkingArea.Height;
+            var taskbar = BLL.Win32Api.GetTaskbarPosition();
+            if (taskbar.Height > 0 && taskbar.Height < Screen.PrimaryScreen.Bounds.Height / 3)
+                return taskbar.Height;
+
+            int workingAreaDelta = Screen.PrimaryScreen.Bounds.Height - Screen.PrimaryScreen.WorkingArea.Height;
+            return workingAreaDelta > 0 ? workingAreaDelta : 40;
         }
 
         private void SystemWatcherControl_MouseEnter(object sender, EventArgs e)
@@ -724,6 +877,51 @@ namespace TaskbarMonitor
                 mousePollTimer.Tick -= MousePollTimer_Tick;
                 mousePollTimer.Dispose();
                 mousePollTimer = null;
+            }
+        }
+
+        private void StartClaudeUsagePolling()
+        {
+            if (claudeUsageTimer != null) return;
+
+            claudeUsageMonitor = new ClaudeUsageMonitor();
+            claudeUsageTimer = new System.Windows.Forms.Timer();
+            claudeUsageTimer.Interval = 120000;
+            claudeUsageTimer.Tick += ClaudeUsageTimer_Tick;
+            claudeUsageTimer.Start();
+            RefreshClaudeUsage();
+        }
+
+        private void StopClaudeUsagePolling()
+        {
+            if (claudeUsageTimer != null)
+            {
+                claudeUsageTimer.Stop();
+                claudeUsageTimer.Tick -= ClaudeUsageTimer_Tick;
+                claudeUsageTimer.Dispose();
+                claudeUsageTimer = null;
+            }
+        }
+
+        private void ClaudeUsageTimer_Tick(object sender, EventArgs e)
+        {
+            RefreshClaudeUsage();
+        }
+
+        private async void RefreshClaudeUsage()
+        {
+            if (claudeUsageMonitor == null || claudeUsageRefreshing) return;
+            claudeUsageRefreshing = true;
+
+            try
+            {
+                await claudeUsageMonitor.RefreshAsync();
+                if (!IsDisposed && IsHandleCreated)
+                    Invalidate();
+            }
+            finally
+            {
+                claudeUsageRefreshing = false;
             }
         }
 
