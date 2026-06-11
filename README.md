@@ -4,7 +4,7 @@ Lightweight CPU + RAM usage charts on the Windows taskbar, with an integrated **
 
 Forked from the original [taskbar-monitor](https://github.com/leandrolugaresi/taskbar-monitor) (built on top of [CS DeskBand](https://github.com/dsafa/CSDeskBand)) and adapted for personal use on Windows 11.
 
-![Example](media/demo.png)
+![demo](https://i.imgur.com/brSOeBn.png)
 
 ## What this fork changes
 
