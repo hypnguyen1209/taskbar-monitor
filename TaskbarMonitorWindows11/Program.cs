@@ -60,8 +60,13 @@ namespace TaskbarMonitorWindows11
                 }
 #endif
 #if (!DEBUG)
-                Application.SetUnhandledExceptionMode(UnhandledExceptionMode.CatchException);                    
+                Application.SetUnhandledExceptionMode(UnhandledExceptionMode.CatchException);
                 Application.ThreadException += Application_ThreadException;
+                AppDomain.CurrentDomain.UnhandledException += (s, ev) =>
+                {
+                    try { OpenReportForm(ev.ExceptionObject as Exception ?? new Exception("Unknown unhandled exception")); }
+                    catch { }
+                };
 #endif
                 
                 taskbarManager = TaskbarManager.GetInstance();                
@@ -79,9 +84,9 @@ namespace TaskbarMonitorWindows11
                 //MessageBox.Show($"Error while running taskbar-monitor: {ex.Message}", Application.ProductName, MessageBoxButtons.OK, MessageBoxIcon.Error);
                 OpenReportForm(ex);
             }
-            finally 
-            { 
-                try { taskbarManager.Dispose(); } catch { }
+            finally
+            {
+                try { taskbarManager?.Dispose(); } catch { }
                 if (singleInstanceMutex != null && isMutexOwner)
                 {
                     try { singleInstanceMutex.ReleaseMutex(); } catch { }

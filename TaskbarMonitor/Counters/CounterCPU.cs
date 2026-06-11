@@ -44,7 +44,7 @@ namespace TaskbarMonitor.Counters
                 if (InfoSummary.History.Count > Options.HistorySize) InfoSummary.History.RemoveAt(0);
                 InfoSummary.CurrentStringValue = Math.Min(InfoSummary.MaximumValue, Math.Max(0, InfoSummary.CurrentValue)).ToString("0") + "%";
 
-                var cores = reader.Values.Where(x => x.Key.StartsWith(@"\Processor Information(*)\% Processor Utility:") && Regex.IsMatch(x.Key, @"\d+,\d+$")).ToList();
+                var cores = reader.Values.Where(x => x.Key.StartsWith(@"\Processor Information(*)\% Processor Utility:") && Regex.IsMatch(x.Key, @"\d+[,_]\d+$")).ToList();
 
                 foreach (var item in cores)
                 {
@@ -71,7 +71,10 @@ namespace TaskbarMonitor.Counters
 
         public override CounterType GetCounterType()
         {
-            return Options.CounterOptions["CPU"].GraphType;//
+            CounterOptions opt;
+            if (Options.CounterOptions.TryGetValue("CPU", out opt))
+                return opt.GraphType;
+            return CounterType.STACKED;
         }
     }
 }

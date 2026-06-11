@@ -26,6 +26,58 @@ namespace TaskbarMonitor
         public SystemWatcherControl TaskbarMonitorControl;        
         public Rectangle PreviousRect = Rectangle.Empty;
     }
+    internal static class TaskbarChildEnum
+    {
+        [DllImport("user32.dll", SetLastError = true)]
+        private static extern IntPtr FindWindowEx(IntPtr hwndParent, IntPtr hwndChildAfter, string lpszClass, string lpszWindow);
+
+        [DllImport("user32.dll")]
+        private static extern bool IsWindowVisible(IntPtr hWnd);
+
+        [DllImport("user32.dll")]
+        private static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
+
+        /// <summary>
+        /// Trả về left edge nhỏ nhất (theo toạ độ screen) của các child trực tiếp
+        /// của <paramref name="taskbarHwnd"/> đang neo bên phải taskbar.
+        /// Bỏ qua handle <paramref name="excludeHwnd"/> (control của mình).
+        /// Trả về 0 nếu không tìm được gì.
+        /// </summary>
+        public static int GetRightSideMinLeft(IntPtr taskbarHwnd, IntPtr excludeHwnd)
+        {
+            if (!GetWindowRect(taskbarHwnd, out RECT tb)) return 0;
+            int tbLeft = tb.left;
+            int tbRight = tb.right;
+            int tbWidth = tbRight - tbLeft;
+            if (tbWidth <= 0) return 0;
+
+            int rightHalfBoundary = tbLeft + tbWidth / 2;
+
+            int minLeft = int.MaxValue;
+            IntPtr child = FindWindowEx(taskbarHwnd, IntPtr.Zero, null, null);
+            while (child != IntPtr.Zero)
+            {
+                if (child != excludeHwnd
+                    && IsWindowVisible(child)
+                    && GetWindowRect(child, out RECT r))
+                {
+                    int width = r.right - r.left;
+                    int height = r.bottom - r.top;
+                    // chỉ tính widget thật (kích thước > 0) nằm bên phải taskbar
+                    if (width > 0 && height > 0 && r.left >= rightHalfBoundary && r.right <= tbRight + 4)
+                    {
+                        if (r.left < minLeft) minLeft = r.left;
+                    }
+                }
+                child = FindWindowEx(taskbarHwnd, child, null, null);
+            }
+
+            if (minLeft == int.MaxValue) return 0;
+            // trả về offset từ phải sang (= tbRight - minLeft)
+            return tbRight - minLeft;
+        }
+    }
+
     public class TaskbarManager: IDisposable
     {
         const int timeoutToRegisterAttemptAfterTaskbarRestart = 10000;
@@ -62,19 +114,42 @@ namespace TaskbarMonitor
 
         private void Timer_Elapsed(object sender, ElapsedEventArgs e)
         {
-            if (TaskbarList.Count > 0)
-            {                
-                TaskbarList[0].TaskbarMonitorControl?.Invoke(new Func<bool>(() => { return AddControlsToTaskbars(); }));
+            Taskbar first = null;
+            List<Taskbar> all;
+            lock (TaskbarList)
+            {
+                if (TaskbarList.Count > 0) first = TaskbarList[0];
+                all = new List<Taskbar>(TaskbarList);
             }
+            var ctl = first?.TaskbarMonitorControl;
+            if (ctl == null || ctl.IsDisposed || !ctl.IsHandleCreated) return;
+            try
+            {
+                ctl.Invoke((MethodInvoker)delegate
+                {
+                    AddControlsToTaskbars();
+                    // Tray icons (Telegram/Discord/...) có thể xuất hiện/biến mất
+                    // mà không trigger LocationChange của TrayNotifyWnd → cần reposition định kỳ.
+                    foreach (var t in all)
+                    {
+                        UpdatePosition(t, true);
+                    }
+                });
+            }
+            catch (ObjectDisposedException) { }
+            catch (InvalidOperationException) { }
         }
 
         private void Monitor_OnOptionsUpdated()
         {
-            for(int i = 0; i < TaskbarList.Count; i++)
+            List<Taskbar> snapshot;
+            lock (TaskbarList)
             {
-                var item = TaskbarList[i];
-                UpdatePosition(item, true);                
-                
+                snapshot = new List<Taskbar>(TaskbarList);
+            }
+            foreach (var item in snapshot)
+            {
+                UpdatePosition(item, true);
             }
         }
 
@@ -91,7 +166,7 @@ namespace TaskbarMonitor
             
 
             var handle = taskbar.TargetWnd;
-            Rectangle rect = BLL.Win32Api.GetWindowSize(handle);           
+            Rectangle rect = BLL.Win32Api.GetWindowSize(handle);
             Rectangle offset = Rectangle.Empty;
             if (taskbar.TaskbarMonitorControl != null)
             {
@@ -100,7 +175,6 @@ namespace TaskbarMonitor
                     if (taskbar.TrayWnd != IntPtr.Zero)
                     {
                         offset = BLL.Win32Api.GetWindowSize(taskbar.TrayWnd);
-                        // offset.Width += 20;
                     }
                 }
                 else
@@ -112,6 +186,22 @@ namespace TaskbarMonitor
                     else if (WindowsInformation.IsWindows11_22621())
                     {
                         offset = new Rectangle(0, 0, 100, 0);
+                    }
+                }
+
+                // Trên Win11, TrayNotifyWnd chỉ chứa clock + system icons.
+                // Các app tray icon (Telegram, Steam, Discord, antivirus, ...) là widget XAML
+                // riêng nằm bên phải taskbar, không bị bao bởi TrayNotifyWnd.
+                // Quét trực tiếp các child của Shell_TrayWnd để lấy ranh giới đầy đủ.
+                if (WindowsInformation.IsWindows11())
+                {
+                    IntPtr exclude = taskbar.TaskbarMonitorControl.IsHandleCreated
+                        ? taskbar.TaskbarMonitorControl.Handle : IntPtr.Zero;
+                    int scanned = TaskbarChildEnum.GetRightSideMinLeft(handle, exclude);
+                    if (scanned > offset.Width)
+                    {
+                        // Cộng thêm padding nhỏ để không sát lề icon ngoài cùng
+                        offset = new Rectangle(0, 0, scanned + 8, 0);
                     }
                 }
             }
@@ -222,15 +312,19 @@ namespace TaskbarMonitor
         {
             Debug.WriteLine("AddControlToTaskbar");
 
-            if (TaskbarList.Any(x => x.TaskbarMonitorControl?.Name == "taskbarMonitorFor" + taskbarArea.Handle))
-                return true;
-
-            Taskbar tb = TaskbarList.Where(x => x.TargetWnd == taskbarArea.Handle).SingleOrDefault();
-            if(tb == null)
+            Taskbar tb;
+            lock (TaskbarList)
             {
-                tb = new Taskbar(isMainTaskbar);
-                TaskbarList.Add(tb);
-                tb.TargetWnd = taskbarArea.Handle;
+                if (TaskbarList.Any(x => x.TaskbarMonitorControl?.Name == "taskbarMonitorFor" + taskbarArea.Handle))
+                    return true;
+
+                tb = TaskbarList.Where(x => x.TargetWnd == taskbarArea.Handle).SingleOrDefault();
+                if (tb == null)
+                {
+                    tb = new Taskbar(isMainTaskbar);
+                    TaskbarList.Add(tb);
+                    tb.TargetWnd = taskbarArea.Handle;
+                }
             }
 
             if(isMainTaskbar && WindowsInformation.IsWindows11_22621())
@@ -369,7 +463,10 @@ namespace TaskbarMonitor
             }
 
             var ret = BLL.WindowList.InvalidateRect(taskbar.TargetWnd, IntPtr.Zero, true);
-            TaskbarList.Remove(taskbar);
+            lock (TaskbarList)
+            {
+                TaskbarList.Remove(taskbar);
+            }
         }
          
         private Dictionary<AccessibleEvents, BLL.Win32Api.WinEventProc> InitializeWinEventToHandlerMap()
@@ -387,7 +484,11 @@ namespace TaskbarMonitor
             if (accEvent == AccessibleEvents.Destroy)
             {
                 
-                var taskbar = TaskbarList.Where(x => x.TargetWnd.ToInt32() == windowHandle.ToInt32()).SingleOrDefault();
+                Taskbar taskbar;
+                lock (TaskbarList)
+                {
+                    taskbar = TaskbarList.Where(x => x.TargetWnd.ToInt32() == windowHandle.ToInt32()).SingleOrDefault();
+                }
                 if(taskbar != null)
                 {
                     bool waitForit = taskbar.IsMainTaskbar;
@@ -412,7 +513,11 @@ namespace TaskbarMonitor
         {
             if (accEvent == AccessibleEvents.LocationChange)
             {
-                var taskbar = TaskbarList.Where(x => x.TrayWnd.ToInt32() == windowHandle.ToInt32()).SingleOrDefault();
+                Taskbar taskbar;
+                lock (TaskbarList)
+                {
+                    taskbar = TaskbarList.Where(x => x.TrayWnd.ToInt32() == windowHandle.ToInt32()).SingleOrDefault();
+                }
                 if (taskbar != null)
                 {
                     UpdatePosition(taskbar);

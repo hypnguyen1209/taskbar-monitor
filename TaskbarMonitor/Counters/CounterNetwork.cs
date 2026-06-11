@@ -63,7 +63,8 @@ namespace TaskbarMonitor.Counters
                 addValue(Infos.Where(x => x.Name == "U").Single(), currentSent);
 
                 // if locks down same scale for both counters is on
-                if (!Options.CounterOptions["NET"].SeparateScales)
+                CounterOptions netOpt;
+                if (Options.CounterOptions.TryGetValue("NET", out netOpt) && !netOpt.SeparateScales)
                 {
                     var info1 = Infos.Where(x => x.Name == "D").Single();
                     var info2 = Infos.Where(x => x.Name == "U").Single();
@@ -84,7 +85,10 @@ namespace TaskbarMonitor.Counters
 
         public override CounterType GetCounterType()
         {
-            return Options.CounterOptions["NET"].GraphType;//
+            CounterOptions opt;
+            if (Options.CounterOptions.TryGetValue("NET", out opt))
+                return opt.GraphType;
+            return CounterType.STACKED;
         }
     }
 }

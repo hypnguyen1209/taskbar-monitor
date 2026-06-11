@@ -242,7 +242,10 @@ namespace TaskbarMonitor.Counters
 
         public override CounterType GetCounterType()
         {
-            return Options.CounterOptions[GetName()].GraphType;
+            CounterOptions opt;
+            if (Options.CounterOptions.TryGetValue(GetName(), out opt))
+                return opt.GraphType;
+            return CounterType.SINGLE;
         }
 
         public new static bool IsAvailable()

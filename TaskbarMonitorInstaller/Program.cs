@@ -90,18 +90,16 @@ namespace TaskbarMonitorInstaller
             {
                 if (WindowsInformation.IsWindows11())
                 {
-                    // we unregister old versions
+                    // Win11 không dùng COM DeskBand → không cần regasm.
+                    // Nếu có DLL cũ từng được register (do từng cài bản Win10 trên máy này),
+                    // mới cần unregister; bọc try/catch để không crash installer khi DLL cũ
+                    // không phải .NET assembly hợp lệ.
                     foreach (var item in info.FilesToRegister)
                     {
-                        var targetFilePath = Path.Combine(info.TargetPath, item);
-                        Console.Write($"Unregistering {item}... ");
-                        RegisterDLL(targetFilePath, false, false);
-                        RegisterDLL(targetFilePath, true, false);
-
-                        targetFilePath = Path.Combine(info.LegacyTargetPath, item);                        
-                        RegisterDLL(targetFilePath, false, false);
-                        RegisterDLL(targetFilePath, true, false);
+                        TryUnregister(Path.Combine(info.TargetPath, item));
+                        TryUnregister(Path.Combine(info.LegacyTargetPath, item));
                     }
+
                     // then we terminate existing processes
                     KillProcess("TaskbarMonitorWindows11");
 
@@ -186,6 +184,15 @@ namespace TaskbarMonitorInstaller
             }
         }
 
+        static void TryUnregister(string target)
+        {
+            if (!File.Exists(target)) return;
+            Console.Write($"Unregistering {Path.GetFileName(target)}... ");
+            try { RegisterDLL(target, false, true); } catch { }
+            try { RegisterDLL(target, true, true); } catch { }
+            Console.WriteLine("OK.");
+        }
+
         static bool RegisterDLL(string target, bool bit64 = false, bool unregister = false)
         {
             string args = unregister ? "/unregister" : "/nologo /codebase";
@@ -203,14 +210,11 @@ namespace TaskbarMonitorInstaller
 
         static bool RollBack(InstallInfo info)
         {
-            // Unregister assemblies          
+            // Unregister assemblies (chỉ ý nghĩa trên Win10; trên Win11 DLL chưa từng được register
+            // nên gọi regasm sẽ fail → bọc bằng TryUnregister để không vỡ uninstall).
             foreach (var item in info.FilesToRegister)
-            {                
-                var targetFilePath = Path.Combine(info.TargetPath, item);
-                Console.Write($"Unregistering {item}... ");
-                RegisterDLL(targetFilePath, false, true);
-                RegisterDLL(targetFilePath, true, true);
-                Console.WriteLine("OK.");
+            {
+                TryUnregister(Path.Combine(info.TargetPath, item));
             }
 
             if (!WindowsInformation.IsWindows11())

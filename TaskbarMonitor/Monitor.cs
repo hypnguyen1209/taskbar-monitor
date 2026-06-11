@@ -33,8 +33,8 @@ namespace TaskbarMonitor
             return _instance;
         }
 
-        private static object updateLock = new object();
-        private static bool updating = false;
+        private readonly object updateLock = new object();
+        private bool updating = false;
         private Monitor(Options opt)
         {
             reader = new PerformanceCounterReader(TimeSpan.FromSeconds(30));
@@ -52,7 +52,7 @@ namespace TaskbarMonitor
 
             if(Counters == null)
                 Counters = new List<Counters.ICounter>();
-            var counterNames = new List<string> { "CPU", "MEM", "DISK", "NET", "GPU 3D", "GPU MEM" };
+            var counterNames = new List<string> { "CPU", "MEM", "NET", "GPU 3D", "GPU MEM" };
             foreach(var counterName in counterNames)
             {
                 var q = Counters.Where(x => x.GetName() == counterName).SingleOrDefault();
@@ -72,9 +72,6 @@ namespace TaskbarMonitor
                             break;
                         case "MEM":
                             ct = new Counters.CounterMemory(opt);
-                            break;
-                        case "DISK":
-                            ct = new Counters.CounterDisk(opt);
                             break;
                         case "NET":
                             ct = new Counters.CounterNetwork(opt);
@@ -130,14 +127,22 @@ namespace TaskbarMonitor
 
         public void Dispose()
         {
-            reader.Dispose();
-            foreach(var ct in Counters)
+            if (pollingTimer != null)
+            {
+                pollingTimer.Stop();
+                pollingTimer.Elapsed -= PollingTimer_Elapsed;
+                pollingTimer.Dispose();
+                pollingTimer = null;
+            }
+            foreach (var ct in Counters)
             {
                 ct.Dispose();
             }
-            pollingTimer?.Stop();
-            pollingTimer?.Dispose();
-            pollingTimer.Elapsed -= PollingTimer_Elapsed;
+            reader?.Dispose();
+            lock (instanceLock)
+            {
+                if (_instance == this) _instance = null;
+            }
         }
     }
 }

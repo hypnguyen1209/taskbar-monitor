@@ -82,7 +82,8 @@ namespace TaskbarMonitor.Counters
 
         public Dictionary<string, float> ReadCounters()
         {
-            Values = new Dictionary<string, float>();
+            // mutate in place — other readers may hold the reference
+            Values.Clear();
             try
             {
                 if (changedPaths || (DateTime.Now - lastRefresh) > refreshInterval)
@@ -92,7 +93,11 @@ namespace TaskbarMonitor.Counters
                     lastRefresh = DateTime.Now;
                 }
                 if (PdhCollectQueryData(queryHandle) != 0)
-                    throw new InvalidOperationException("Failed to collect PDH data.");
+                {
+                    // force a refresh on next call so transient errors recover
+                    lastRefresh = DateTime.MinValue;
+                    return Values;
+                }
 
                 foreach (var countersByPath in counterHandles)
                 {
@@ -130,9 +135,15 @@ namespace TaskbarMonitor.Counters
                 
                  
             }
-            catch (InvalidOperationException ex)
+            catch (InvalidOperationException)
             {
-                Console.WriteLine(ex.Message);
+                // PDH transient failure — force re-init on next read
+                lastRefresh = DateTime.MinValue;
+            }
+            catch (Exception)
+            {
+                // never throw out of the polling loop
+                lastRefresh = DateTime.MinValue;
             }
             return Values;
         }

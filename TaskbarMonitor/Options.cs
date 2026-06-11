@@ -119,20 +119,6 @@ namespace TaskbarMonitor
                         ShowTitleShadowOnHover = true,
                         Order = 1
                     } },
-                    { "DISK", new CounterOptions { 
-                        GraphType = TaskbarMonitor.Counters.ICounter.CounterType.STACKED,
-                        SeparateScales =true,
-                        InvertOrder = false,
-                        SummaryPosition = TaskbarMonitor.CounterOptions.DisplayPosition.TOP,
-                        CurrentValueAsSummary = true,
-                        ShowCurrentValueShadowOnHover = true,
-                        ShowCurrentValue = TaskbarMonitor.CounterOptions.DisplayType.SHOW,
-                        TitlePosition = TaskbarMonitor.CounterOptions.DisplayPosition.MIDDLE,
-                        ShowTitle = TaskbarMonitor.CounterOptions.DisplayType.HOVER,
-                        Enabled = true,
-                        ShowTitleShadowOnHover = true,
-                        Order = 2
-                    } },
                     { "NET", new CounterOptions {
                         GraphType = TaskbarMonitor.Counters.ICounter.CounterType.STACKED,
                         SeparateScales =true,
@@ -211,8 +197,42 @@ namespace TaskbarMonitor
             var origin = System.IO.Path.Combine(folder, "config.json");
             if (System.IO.File.Exists(origin))
             {
-                opt = JsonConvert.DeserializeObject<Options>(System.IO.File.ReadAllText(origin));
+                Options loaded = null;
+                try
+                {
+                    var content = System.IO.File.ReadAllText(origin);
+                    if (!string.IsNullOrWhiteSpace(content))
+                        loaded = JsonConvert.DeserializeObject<Options>(content);
+                }
+                catch
+                {
+                    loaded = null;
+                }
+
+                if (loaded == null)
+                {
+                    // corrupted config — fall back to defaults and overwrite
+                    opt.SaveToDisk();
+                    return opt;
+                }
+                opt = loaded;
+
                 bool changed = false;
+                if (opt.CounterOptions == null)
+                {
+                    opt.CounterOptions = DefaultOptions().CounterOptions;
+                    changed = true;
+                }
+                if (opt.MonitorOptions == null)
+                {
+                    opt.MonitorOptions = new Dictionary<string, MonitorOptions>();
+                    changed = true;
+                }
+                if (opt.PollTime < 1) { opt.PollTime = 1; changed = true; }
+                if (opt.PollTime > 60) { opt.PollTime = 60; changed = true; }
+                if (opt.HistorySize < 10) { opt.HistorySize = 10; changed = true; }
+                if (opt.HistorySize > 500) { opt.HistorySize = 500; changed = true; }
+
                 if (opt.OptionsVersion < 6)
                 {
                     opt.EnableClaudeUsage = true;
@@ -245,11 +265,25 @@ namespace TaskbarMonitor
         {
             var folder = System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Programs", "taskbar-monitor");
             var origin = System.IO.Path.Combine(folder, "config.json");
+            var tmp = origin + ".tmp";
             if (!System.IO.Directory.Exists(folder))
                 System.IO.Directory.CreateDirectory(folder);
 
-            System.IO.File.WriteAllText(origin, JsonConvert.SerializeObject(this, Formatting.Indented));
-            return true;
+            try
+            {
+                var payload = JsonConvert.SerializeObject(this, Formatting.Indented);
+                System.IO.File.WriteAllText(tmp, payload);
+                if (System.IO.File.Exists(origin))
+                    System.IO.File.Replace(tmp, origin, null);
+                else
+                    System.IO.File.Move(tmp, origin);
+                return true;
+            }
+            catch
+            {
+                try { if (System.IO.File.Exists(tmp)) System.IO.File.Delete(tmp); } catch { }
+                return false;
+            }
         }
         private bool _Upgrade(GraphTheme graphTheme)
         {

@@ -23,9 +23,16 @@ namespace TaskbarMonitor
 
     internal class ClaudeUsageMonitor
     {
-        private static readonly HttpClient Client = new HttpClient();
+        private static readonly HttpClient Client = CreateClient();
         private readonly object sync = new object();
         private ClaudeUsageSnapshot snapshot = new ClaudeUsageSnapshot();
+
+        private static HttpClient CreateClient()
+        {
+            var c = new HttpClient();
+            c.Timeout = TimeSpan.FromSeconds(30);
+            return c;
+        }
 
         public ClaudeUsageSnapshot Snapshot
         {

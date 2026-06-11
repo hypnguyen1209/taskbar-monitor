@@ -33,6 +33,10 @@ namespace TaskbarMonitor
         private ClaudeUsageMonitor claudeUsageMonitor;
         private System.Windows.Forms.Timer claudeUsageTimer;
         private bool claudeUsageRefreshing;
+        private DateTime themeCacheTime = DateTime.MinValue;
+        private Options.ThemeList themeCacheType = Options.ThemeList.AUTOMATIC;
+        private GraphTheme themeCacheValue = null;
+        private static readonly TimeSpan themeCacheTtl = TimeSpan.FromSeconds(5);
 
         [Browsable(false)]
         [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
@@ -149,6 +153,21 @@ namespace TaskbarMonitor
 
         private GraphTheme GetTheme(Options opt)
         {
+            if (themeCacheValue != null
+                && themeCacheType == opt.ThemeType
+                && (DateTime.UtcNow - themeCacheTime) < themeCacheTtl)
+            {
+                return themeCacheValue;
+            }
+            GraphTheme theme = GetThemeUncached(opt);
+            themeCacheValue = theme;
+            themeCacheType = opt.ThemeType;
+            themeCacheTime = DateTime.UtcNow;
+            return theme;
+        }
+
+        private GraphTheme GetThemeUncached(Options opt)
+        {
             GraphTheme theme = darkTheme;
 
             if (opt.ThemeType == Options.ThemeList.LIGHT)
@@ -242,15 +261,22 @@ namespace TaskbarMonitor
 
         public void ApplyOptions(Options Options, GraphTheme theme)
         {
-            this.Monitor.UpdateOptions(Options);            
+            this.Monitor.UpdateOptions(Options);
             this.Options = Options;
             this.defaultTheme = theme;
+            themeCacheValue = theme;
+            themeCacheType = Options.ThemeType;
+            themeCacheTime = DateTime.UtcNow;
 
             fontTitle = new Font(defaultTheme.TitleFont, defaultTheme.TitleSize, defaultTheme.TitleFontStyle);
             fontCounter = new Font(defaultTheme.CurrentValueFont, defaultTheme.CurrentValueSize, defaultTheme.CurrentValueFontStyle);
 
             if (!PreviewMode)
             {
+                if (_contextMenu != null)
+                {
+                    try { _contextMenu.Dispose(); } catch { }
+                }
                 _contextMenu = new ContextMenu();
                 _contextMenu.MenuItems.Add(new MenuItem("Settings...", MenuItem_Settings_onClick));
                 _contextMenu.MenuItems.Add(new MenuItem("Open Task Manager...", (e, a) =>
@@ -282,6 +308,13 @@ namespace TaskbarMonitor
             //UpdateGraphs();
             this.Invalidate();
 
+            if (!PreviewMode)
+            {
+                if (Options.EnableClaudeUsage)
+                    StartClaudeUsagePolling();
+                else
+                    StopClaudeUsagePolling();
+            }
         }
         private void Initialize(Options opt)
         {
@@ -304,7 +337,7 @@ namespace TaskbarMonitor
             AdjustControlSize();
             if (BLL.WindowsInformation.IsWindows11())
                 StartMousePolling();
-            if (!PreviewMode)
+            if (!PreviewMode && opt.EnableClaudeUsage)
                 StartClaudeUsagePolling();
             //BLL.Win32Api.SetWindowPos(this.Handle, new IntPtr(0), this.Left, this.Top, this.Width, this.Height, 0);
 
@@ -334,7 +367,8 @@ namespace TaskbarMonitor
 
             if (!VerticalTaskbarMode)
             {
-                controlWidth = GetUsageLimitWidth() + GetUsageLimitGap() + 34 + counterSize + 60;
+                int claudeReserve = ShouldShowClaudeUsage() ? (GetUsageLimitWidth() + GetUsageLimitGap()) : 0;
+                controlWidth = claudeReserve + 34 + counterSize + 60;
                 controlHeight = minimumHeight;
             }
 
@@ -652,7 +686,8 @@ namespace TaskbarMonitor
         private int GetCpuBlockX()
         {
             int cpuBlockWidth = 34 + Options.HistorySize + 10 + 60;
-            return Math.Max(GetUsageLimitWidth() + GetUsageLimitGap(), this.Width - cpuBlockWidth);
+            int minLeft = ShouldShowClaudeUsage() ? GetUsageLimitWidth() + GetUsageLimitGap() : 2;
+            return Math.Max(minLeft, this.Width - cpuBlockWidth);
         }
 
         private bool ShouldShowClaudeUsage()
@@ -738,7 +773,7 @@ namespace TaskbarMonitor
             foreach (var item in info.History)
             {
                 var heightItem = (item * maxH) / info.MaximumValue;
-                if (heightItem > Int32.MaxValue) height = Int32.MaxValue;
+                if (heightItem > Int32.MaxValue) heightItem = Int32.MaxValue;
                 var convertido = Convert.ToInt32(Math.Round(heightItem));
 
 
@@ -886,7 +921,7 @@ namespace TaskbarMonitor
 
             claudeUsageMonitor = new ClaudeUsageMonitor();
             claudeUsageTimer = new System.Windows.Forms.Timer();
-            claudeUsageTimer.Interval = 120000;
+            claudeUsageTimer.Interval = 60000;
             claudeUsageTimer.Tick += ClaudeUsageTimer_Tick;
             claudeUsageTimer.Start();
             RefreshClaudeUsage();
