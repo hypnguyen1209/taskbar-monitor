@@ -38,6 +38,25 @@ Forked from the original [taskbar-monitor](https://github.com/leandrolugaresi/ta
 1. Build the solution (`Release|Any CPU`) or download a prebuilt `TaskbarMonitorInstaller.exe`.
 2. Run the installer **as Administrator** — it installs into `C:\Program Files\TaskbarMonitor`, registers itself in startup, and on Windows 11 launches the tray app immediately.
 
+### Enabling the DeskBand on Windows 10
+
+The Windows 10 build is a COM DeskBand — installing registers it, but Explorer doesn't show it automatically. You have to enable it once:
+
+1. Right-click an empty spot on the taskbar → uncheck **Lock the taskbar** (if locked).
+2. Right-click the taskbar again → **Toolbars** → click **taskbar-monitor**.
+3. The CPU/RAM/Claude bars appear near the clock. Drag the toolbar handle to resize.
+
+If `taskbar-monitor` does not appear in the **Toolbars** submenu, the COM registration didn't take effect. Verify and re-register manually:
+
+```powershell
+# PowerShell as Administrator
+reg query "HKLM\SOFTWARE\Classes\CLSID\{1A7AC366-8395-4F22-AAC8-CD2502FCE2B5}" /s
+# If empty, force re-register:
+cd "C:\Program Files\TaskbarMonitor"
+C:\Windows\Microsoft.NET\Framework64\v4.0.30319\regasm.exe /codebase TaskbarMonitor.dll
+Stop-Process -Name explorer -Force
+```
+
 If a previous broken install left files behind, clean them first:
 
 ```powershell
