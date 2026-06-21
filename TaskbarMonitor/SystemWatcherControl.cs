@@ -328,7 +328,6 @@ namespace TaskbarMonitor
             SetStyle(ControlStyles.DoubleBuffer, true);
             SetStyle(ControlStyles.SupportsTransparentBackColor, true);
             SetStyle(ControlStyles.UserPaint, true);
-            SetStyle(ControlStyles.Opaque, true);
             
             ApplyOptions(opt, theme);
             //Initialize();
@@ -633,7 +632,6 @@ namespace TaskbarMonitor
                 }
             }
 
-            AdjustControlSize();
             base.OnPaint(e);
         }
 
@@ -952,7 +950,10 @@ namespace TaskbarMonitor
             {
                 await claudeUsageMonitor.RefreshAsync();
                 if (!IsDisposed && IsHandleCreated)
+                {
+                    AdjustControlSize();
                     Invalidate();
+                }
             }
             finally
             {
